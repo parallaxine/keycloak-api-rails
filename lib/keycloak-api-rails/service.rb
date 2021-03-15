@@ -1,6 +1,5 @@
 module Keycloak
   class Service
-    
     def initialize(key_resolver)
       @key_resolver                          = key_resolver
       @skip_paths                            = Keycloak.config.skip_paths
@@ -9,7 +8,7 @@ module Keycloak
     end
 
     def decode_and_verify(token)
-      unless token.nil? || token&.empty?
+      if token.present?
         public_key    = @key_resolver.find_public_keys
         decoded_token = JSON::JWT.decode(token, public_key)
 

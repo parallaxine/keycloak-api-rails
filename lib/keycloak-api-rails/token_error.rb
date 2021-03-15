@@ -16,15 +16,11 @@ class TokenError < StandardError
     TokenError.new(token, :invalid_format, "Wrong JWT Format", original_error)
   end
 
-  def self.no_token(token)
-    TokenError.new(token, :no_token, "No JWT token provided", nil)
+  def self.no_token(_token)
+    TokenError.new(nil, :no_token, "No JWT token provided", nil)
   end
 
   def self.expired(token)
     TokenError.new(token, :expired, "JWT token is expired", nil)
-  end
-
-  def self.unknown(token)
-    TokenError.new
   end
 end

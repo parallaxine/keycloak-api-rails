@@ -1,55 +1,92 @@
 module Keycloak
-
   class Middleware
-    def initialize(app)
+    include Dry::Monads[:result]
+
+    include Import[authenticate: "keycloak-api.authenticate", config: "keycloak-api.config"]
+
+    delegate :logger, to: :config
+
+    def initialize(app, **options)
+      super(**options)
+
       @app = app
+
+      @assigner = Keycloak::Helper::Assigner.new
     end
 
     def call(env)
-      method = env["REQUEST_METHOD"]
-      path   = env["PATH_INFO"]
-      uri    = env["REQUEST_URI"]
+      result = authenticate.call(env)
 
-      if service.need_authentication?(method, path, env)
-        logger.debug("Start authentication for #{method} : #{path}")
-        token         = service.read_token(uri, env)
-        decoded_token = service.decode_and_verify(token)
-        authentication_succeeded(env, decoded_token)
+      env["keycloak:auth_result"] = result
+
+      return authentication_failed(env, result) if halt?(result)
+
+      session_opts = { skipped: false, auth_result: result }
+
+      case result
+      in Success[:authenticated, decoded_token]
+        session_opts[:token] = decoded_token
+
+        @assigner.call env, decoded_token
+      in Success[:skipped]
+        session_opts[:skipped] = true
       else
-        logger.debug("Skip authentication for #{method} : #{path}")
-        @app.call(env)
+        # nothing to do
       end
-    rescue TokenError => e
-      authentication_failed(e.message)
-    end
 
-    def authentication_failed(message)
-      logger.info(message)
-      [401, {"Content-Type" => "application/json"}, [ { error: message }.to_json]]
-    end
+      env["keycloak:session"] = session = Keycloak::Session.new session_opts
+      env["keycloak:authorize_realm"] = session.authorize_realm
+      env["keycloak:authorize_resource"] = session.authorize_resource
 
-    def authentication_succeeded(env, decoded_token)
-      Helper.assign_current_user_id(env, decoded_token)
-      Helper.assign_current_authorized_party(env, decoded_token)
-      Helper.assign_current_user_email(env, decoded_token)
-      Helper.assign_current_user_locale(env, decoded_token)
-      Helper.assign_current_user_custom_attributes(env, decoded_token, config.custom_attributes)
-      Helper.assign_realm_roles(env, decoded_token)
-      Helper.assign_resource_roles(env, decoded_token)
-      Helper.assign_keycloak_token(env, decoded_token)
       @app.call(env)
     end
 
-    def service
-      Keycloak.service
+    private
+
+    def authentication_failed(env, monad)
+      headers = build_failure_headers(env, monad)
+
+      body = build_failure_body(env, monad)
+
+      body = body.to_json unless body.kind_of?(String)
+
+      [
+        401,
+        headers,
+        [ body ]
+      ]
     end
 
-    def logger
-      Keycloak.logger
+    def build_failure_headers(env, monad)
+      {
+        "Content-Type" => "application/json"
+      }
     end
 
-    def config
-      Keycloak.config
+    # Currently uses GraphQL error format.
+    #
+    # @todo Make customizable
+    def build_failure_body(env, monad)
+      reason, message, token, original_error = monad.failure
+
+      logger.debug message
+
+      {
+        errors: [
+          {
+            message: message,
+            extensions: {
+              code: "UNAUTHENTICATED"
+            }
+          }
+        ]
+      }
+    end
+
+    def halt?(result)
+      return false unless result.failure?
+
+      config.halt_on_auth_failure?
     end
   end
 end

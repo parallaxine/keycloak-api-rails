@@ -3,7 +3,8 @@ RSpec.describe Keycloak::Service do
   let(:public_key_cache_ttl)  { 86400 }
   let(:server_url)            { "whatever:8080" }
   let(:realm_id)              { "pouet" }
-  let!(:resolver)             { Keycloak::PublicKeyCachedResolver.new(server_url, realm_id, public_key_cache_ttl) }
+  let(:config) { Keycloak::Config.new realm_id: realm_id, server_url: server_url, public_key_cache_ttl: public_key_cache_ttl }
+  let!(:resolver)             { Keycloak::PublicKeyCachedResolver.new(config: config) }
 
   before(:each) do
     resolver.instance_variable_set(:@resolver, Keycloak::PublicKeyResolverStub.new)
